@@ -1,7 +1,7 @@
 .{
-    .name = .net,
-    .version = "0.2.4",
-    .fingerprint = 0xf2ea15ffb14fcb60,
+    .name = .znetw,
+    .version = "0.2.5",
+    .fingerprint = 0x6597dee5fab4b82a,
     .minimum_zig_version = "0.15.1",
     .dependencies = .{},
 

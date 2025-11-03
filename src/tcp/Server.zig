@@ -28,7 +28,7 @@ pub const Connection = struct {
 
     socket: socket_t,
     client_ip4: Ip4Address,
-    alive: bool,
+    alive: AtomicBool,
     listening: AtomicBool = .init(false),
     awaits_disposal: AtomicBool = .init(false),
     listen_th: ?Thread = null,
@@ -46,7 +46,7 @@ pub const Connection = struct {
         return Connection{
             .socket = socket,
             .client_ip4 = client_ip4,
-            .alive = true,
+            .alive = .init(true),
             .server = server,
         };
     }
@@ -59,7 +59,7 @@ pub const Connection = struct {
             self.listening.store(false, .release);
 
             if (self.server.blocking) {
-                self.alive = false;
+                self.alive.store(false, .release);
                 posix.shutdown(self.socket, posix.ShutdownHow.both) catch |err| {
                     std.log.err("tcp server connection socket shutdown error: {s}", .{@errorName(err)});
                     std.log.info("tcp server connection closing socket", .{});
@@ -71,8 +71,8 @@ pub const Connection = struct {
             self.listen_th = null;
         }
 
-        if (self.alive) {
-            self.alive = false;
+        if (self.alive.load(.acquire)) {
+            self.alive.store(false, .release);
             posix.close(self.socket);
         }
 
@@ -85,7 +85,7 @@ pub const Connection = struct {
     /// `NotAlive` if the connection is not alive.
     /// `AlreadyListening` if the listen thread is already running.
     pub fn listen(self: *Connection) ConnListenError!void {
-        if (!self.alive)
+        if (!self.alive.load(.acquire))
             return ConnListenError.NotAlive;
 
         if (self.listen_th != null)
@@ -124,7 +124,7 @@ pub const Connection = struct {
     /// Returns `NotAlive` if the connection is not alive.
     /// It might immediately return `WouldBlock` for a blocking operation in non-blocking mode.
     pub fn send(self: Connection, data: []const u8) ConnSendError!void {
-        if (!self.alive)
+        if (!self.alive.load(.acquire))
             return ConnSendError.NotAlive;
 
         const bytes_sent = try posix.write(self.socket, data);
@@ -147,7 +147,7 @@ const backlog = 128;
 socket: socket_t,
 ip4: Ip4Address,
 blocking: bool,
-bound: bool,
+bound: AtomicBool,
 /// this callback should be written with care, as it will be called from multiple listening connection threads
 dispatch_fn: ?*const fn (connection: *Connection, data: []const u8) anyerror!void = null,
 listening: AtomicBool = .init(false),
@@ -176,7 +176,7 @@ pub fn open(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize, allo
         .socket = socket,
         .ip4 = ip4,
         .blocking = blocking,
-        .bound = true,
+        .bound = .init(true),
         .connections = .init(allocator),
         .buffer_size = buffer_size orelse tcp.buffer_size,
         .allocator = allocator,
@@ -191,7 +191,7 @@ pub fn close(self: *TcpServer) void {
         self.listening.store(false, .release);
 
         if (self.blocking) {
-            self.bound = false;
+            self.bound.store(false, .release);
             posix.shutdown(self.socket, posix.ShutdownHow.both) catch |err| {
                 std.log.err("tcp server socket shutdown error: {s}", .{@errorName(err)});
                 std.log.info("tcp server closing socket", .{});
@@ -212,8 +212,8 @@ pub fn close(self: *TcpServer) void {
         std.log.info("all {d} tcp connections closed", .{len});
     }
 
-    if (self.bound) {
-        self.bound = false;
+    if (self.bound.load(.acquire)) {
+        self.bound.store(false, .release);
         posix.close(self.socket);
     }
 
@@ -226,7 +226,7 @@ pub fn close(self: *TcpServer) void {
 /// - `NotBound` if the server socket is not bound.
 /// - `AlreadyListening` if the listen thread is already running and listening for connections.
 pub fn listen(self: *TcpServer) ServerListenError!void {
-    if (!self.bound)
+    if (!self.bound.load(.acquire))
         return ServerListenError.NotBound;
 
     if (self.listen_th != null)

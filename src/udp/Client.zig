@@ -40,7 +40,7 @@ pub fn connect(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize, a
         .socket = socket,
         .ip4 = ip4,
         .blocking = blocking,
-        .bound = true,
+        .bound = .init(true),
         .buffer_size = buffer_size orelse udp.buffer_size,
         .allocator = allocator,
     } };
@@ -59,7 +59,7 @@ pub inline fn close(self: *UdpClient) void {
 /// - `NotConnected` if the client is not connected.
 /// - `AlreadyListening` if the listen thread is already running.
 pub fn listen(self: *UdpClient) ClientListenError!void {
-    if (!self.udp_core.bound)
+    if (!self.udp_core.bound.load(.acquire))
         return ClientListenError.NotConnected;
 
     if (self.udp_core.serve_th != null)
@@ -98,7 +98,7 @@ fn listenLoop(self: *const UdpClient) std.mem.Allocator.Error!void {
 /// Returns `NotConnected` if the client is not connected.
 /// It might immediately return `WouldBlock` for a blocking operation in non-blocking mode.
 pub fn send(self: UdpClient, data: []const u8) ClientSendError!void {
-    if (!self.udp_core.bound)
+    if (!self.udp_core.bound.load(.acquire))
         return ClientSendError.NotConnected;
 
     const bytes_sent = try posix.write(self.udp_core.socket, data);

@@ -30,19 +30,20 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
 
-    const lib_mod = b.addModule("net", .{
+    const lib_mod = b.addModule("znetw", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .pic = true,
     });
 
-    priv_lib_mod.addImport("net", lib_mod);
+    priv_lib_mod.addImport("znetw", lib_mod);
     lib_mod.addImport("util", priv_lib_mod);
 
     const lib = b.addLibrary(.{
-        .linkage = .static,
-        .name = "net",
+        .linkage = .dynamic,
+        .name = "znetw",
         .root_module = lib_mod,
     });
 

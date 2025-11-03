@@ -23,7 +23,7 @@ pub const ServerSendToError = udp.SendError || posix.SendToError || error{NotBou
 socket: socket_t,
 ip4: net.Ip4Address,
 blocking: bool = false,
-bound: bool = false,
+bound: AtomicBool,
 dispatch_fn: ?*const fn (server: *const UdpServer, sender_addr: Ip4Address, data: []const u8) anyerror!void = null,
 listening: AtomicBool = .init(false),
 serve_th: ?Thread = null,
@@ -49,7 +49,7 @@ pub fn open(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize, allo
         .ip4 = ip4,
         .buffer_size = buffer_size orelse udp.buffer_size,
         .blocking = blocking,
-        .bound = true,
+        .bound = .init(true),
         .allocator = allocator,
     };
 }
@@ -62,7 +62,7 @@ pub fn close(self: *UdpServer) void {
         self.listening.store(false, .release);
 
         if (self.blocking) {
-            self.bound = false;
+            self.bound.store(false, .release);
             posix.shutdown(self.socket, .both) catch |err| {
                 std.log.err("udp server socket shutdown error: {s}", .{@errorName(err)});
                 std.log.info("udp server closing socket", .{});
@@ -74,8 +74,8 @@ pub fn close(self: *UdpServer) void {
         self.serve_th = null;
     }
 
-    if (self.bound) {
-        self.bound = false;
+    if (self.bound.load(.acquire)) {
+        self.bound.store(false, .release);
         posix.close(self.socket);
     }
 
@@ -88,7 +88,7 @@ pub fn close(self: *UdpServer) void {
 /// - `NotBound` if the server socket is not bound.
 /// - `AlreadyListening` if the listen thread is already running.
 pub fn listen(self: *UdpServer) ServerListenError!void {
-    if (!self.bound)
+    if (!self.bound.load(.acquire))
         return ServerListenError.NotBound;
 
     if (self.serve_th != null)
@@ -130,7 +130,7 @@ fn listenLoop(self: *UdpServer) std.mem.Allocator.Error!void {
 /// Even though `sendTo` could utilize a different socket, the function will call `sendTo` on the server bound socket, hence returning `NotBound` if the socket is not bound.
 /// It might immediately return `WouldBlock` for a blocking operation in non-blocking mode.
 pub fn sendTo(self: UdpServer, ip4: Ip4Address, data: []const u8) ServerSendToError!void {
-    if (!self.bound)
+    if (!self.bound.load(.acquire))
         return ServerSendToError.NotBound;
 
     const bytes_sent = try posix.sendto(self.socket, data, 0, @ptrCast(&ip4.sa), @sizeOf(addr_in));

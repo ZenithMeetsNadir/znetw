@@ -24,7 +24,7 @@ pub const ClientSendError = tcp.SendError || error{NotConnected};
 socket: socket_t,
 ip4: net.Ip4Address,
 blocking: bool,
-connected: bool,
+connected: AtomicBool,
 /// this callback should be written with care, as it will be called from the listen thread
 dispatch_fn: ?*const fn (self: *const TcpClient, data: []const u8) anyerror!void = null,
 listening: AtomicBool = .init(false),
@@ -52,7 +52,7 @@ pub fn connect(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize) C
         .socket = socket,
         .ip4 = ip4,
         .blocking = blocking,
-        .connected = true,
+        .connected = .init(true),
         .buffer_size = buffer_size orelse tcp.buffer_size,
     };
 }
@@ -65,7 +65,7 @@ pub fn close(self: *TcpClient) void {
         self.listening.store(false, .release);
 
         if (self.blocking) {
-            self.connected = false;
+            self.connected.store(false, .release);
             posix.shutdown(self.socket, posix.ShutdownHow.both) catch |err| {
                 std.log.err("tcp client socket shutdown error: {s}", .{@errorName(err)});
                 std.log.info("tcp client closing socket", .{});
@@ -77,8 +77,8 @@ pub fn close(self: *TcpClient) void {
         self.listen_th = null;
     }
 
-    if (self.connected) {
-        self.connected = false;
+    if (self.connected.load(.acquire)) {
+        self.connected.store(false, .release);
         posix.close(self.socket);
     }
 
@@ -91,7 +91,7 @@ pub fn close(self: *TcpClient) void {
 /// - `NotConnected` if the client is not connected.
 /// - `AlreadyListening` if the listen thread is already running.
 pub fn listen(self: *TcpClient, allocator: std.mem.Allocator) ClientListenError!void {
-    if (!self.connected)
+    if (!self.connected.load(.acquire))
         return ClientListenError.NotConnected;
 
     if (self.listen_th != null)
@@ -130,7 +130,7 @@ fn listenLoop(self: *const TcpClient, allocator: std.mem.Allocator) std.mem.Allo
 /// Returns `NotConnected` if the client is not connected.
 /// It might immediately return `WouldBlock` for a blocking operation in non-blocking mode.
 pub fn send(self: TcpClient, data: []const u8) ClientSendError!void {
-    if (!self.connected)
+    if (!self.connected.load(.acquire))
         return ClientSendError.NotConnected;
 
     const bytes_sent = try posix.write(self.socket, data);
