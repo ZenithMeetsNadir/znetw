@@ -1,6 +1,6 @@
 .{
     .name = .znetw,
-    .version = "0.2.5",
+    .version = "0.2.6",
     .fingerprint = 0x6597dee5fab4b82a,
     .minimum_zig_version = "0.15.1",
     .dependencies = .{},
