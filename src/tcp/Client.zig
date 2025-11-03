@@ -13,6 +13,8 @@ const socket_util = util.socket;
 const TcpServer = @import("Server.zig");
 const tcp = @import("tcp.zig");
 
+const log = std.log.scoped(.TcpClient);
+
 const TcpClient = @This();
 
 const AtomicBool = std.atomic.Value(bool);
@@ -67,8 +69,8 @@ pub fn close(self: *TcpClient) void {
         if (self.blocking) {
             self.connected.store(false, .release);
             posix.shutdown(self.socket, posix.ShutdownHow.both) catch |err| {
-                std.log.err("tcp client socket shutdown error: {s}", .{@errorName(err)});
-                std.log.info("tcp client closing socket", .{});
+                log.warn("failed to shutdown socket properly due to error: {s}", .{@errorName(err)});
+                log.info("closing socket", .{});
                 posix.close(self.socket);
             };
         }
@@ -82,7 +84,7 @@ pub fn close(self: *TcpClient) void {
         posix.close(self.socket);
     }
 
-    std.log.info("tcp client shut down", .{});
+    log.info("shut down", .{});
 }
 
 /// Starts listening for incoming data on a dedicated thread.
@@ -102,12 +104,12 @@ pub fn listen(self: *TcpClient, allocator: std.mem.Allocator) ClientListenError!
 
     self.listen_th = try Thread.spawn(.{}, listenLoop, .{ self, allocator });
 
-    std.log.info("tcp client running...", .{});
+    log.info("running...", .{});
 }
 
 fn listenLoop(self: *const TcpClient, allocator: std.mem.Allocator) std.mem.Allocator.Error!void {
     if (self.dispatch_fn == null)
-        std.log.warn("tcp client dispatch function is not set, incoming data will not be processed", .{});
+        log.warn("dispatch function is not set, incoming data will not be processed", .{});
 
     const buffer = try allocator.alloc(u8, self.buffer_size);
     defer allocator.free(buffer);
@@ -136,5 +138,5 @@ pub fn send(self: TcpClient, data: []const u8) ClientSendError!void {
     const bytes_sent = try posix.write(self.socket, data);
 
     if (bytes_sent != data.len)
-        std.log.err("tcp client send() inconsistency - number of bytes sent: {d} of {d}", .{ bytes_sent, data.len });
+        log.warn("send() inconsistency - number of bytes sent: {d} of {d}", .{ bytes_sent, data.len });
 }

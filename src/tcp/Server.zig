@@ -12,6 +12,8 @@ const util = @import("util");
 const socket_util = util.socket;
 const tcp = @import("tcp.zig");
 
+const log = std.log.scoped(.TcpServer);
+
 const TcpServer = @This();
 
 const AtomicBool = std.atomic.Value(bool);
@@ -61,8 +63,8 @@ pub const Connection = struct {
             if (self.server.blocking) {
                 self.alive.store(false, .release);
                 posix.shutdown(self.socket, posix.ShutdownHow.both) catch |err| {
-                    std.log.err("tcp server connection socket shutdown error: {s}", .{@errorName(err)});
-                    std.log.info("tcp server connection closing socket", .{});
+                    log.warn("connection failed to shutdown socket properly due to error: {s}", .{@errorName(err)});
+                    log.info("connection closing socket", .{});
                     posix.close(self.socket);
                 };
             }
@@ -76,7 +78,7 @@ pub const Connection = struct {
             posix.close(self.socket);
         }
 
-        std.log.info("tcp connection from {f} closed", .{self.client_ip4});
+        log.info("connection from {f} closed", .{self.client_ip4});
     }
 
     /// Starts listening for incoming data on a dedicated thread. Triggers server defined callback `dispatch_fn` on receive.
@@ -96,12 +98,12 @@ pub const Connection = struct {
 
         self.listen_th = try Thread.spawn(.{}, listenLoop, .{self});
 
-        std.log.info("tcp connection to {f} opened", .{self.client_ip4});
+        log.info("connection to {f} opened", .{self.client_ip4});
     }
 
     fn listenLoop(self: *Connection) std.mem.Allocator.Error!void {
         if (self.server.dispatch_fn == null)
-            std.log.warn("tcp server dispatch function is not set, incoming data will not be processed", .{});
+            log.warn("dispatch function is not set, incoming data will not be processed", .{});
 
         const buffer = try self.server.allocator.alloc(u8, self.server.buffer_size);
         defer self.server.allocator.free(buffer);
@@ -130,7 +132,7 @@ pub const Connection = struct {
         const bytes_sent = try posix.write(self.socket, data);
 
         if (bytes_sent != data.len)
-            std.log.warn("tcp server send() inconsistency - number of bytes sent: {d} of {d}.", .{ bytes_sent, data.len });
+            log.warn("connection send() inconsistency - number of bytes sent: {d} of {d}.", .{ bytes_sent, data.len });
     }
 
     /// Labels the connection to be later disposed of. It will be closed and removed from the server's connection list.
@@ -193,8 +195,8 @@ pub fn close(self: *TcpServer) void {
         if (self.blocking) {
             self.bound.store(false, .release);
             posix.shutdown(self.socket, posix.ShutdownHow.both) catch |err| {
-                std.log.err("tcp server socket shutdown error: {s}", .{@errorName(err)});
-                std.log.info("tcp server closing socket", .{});
+                log.warn("failed to shutdown socket properly due to error: {s}", .{@errorName(err)});
+                log.info("closing socket", .{});
                 posix.close(self.socket);
             };
         }
@@ -209,7 +211,7 @@ pub fn close(self: *TcpServer) void {
         }
         self.connections.deinit();
 
-        std.log.info("all {d} tcp connections closed", .{len});
+        log.info("all {d} connections closed", .{len});
     }
 
     if (self.bound.load(.acquire)) {
@@ -217,7 +219,7 @@ pub fn close(self: *TcpServer) void {
         posix.close(self.socket);
     }
 
-    std.log.info("tcp server shut down", .{});
+    log.info("shut down", .{});
 }
 
 /// Starts listening for incoming connections on a dedicated thread and accepts them.
@@ -239,7 +241,7 @@ pub fn listen(self: *TcpServer) ServerListenError!void {
 
     self.listen_th = try Thread.spawn(.{}, acceptLoop, .{self});
 
-    std.log.info("tcp server listening on {f}...", .{self.ip4});
+    log.info("listening on {f}...", .{self.ip4});
 }
 
 fn acceptLoop(self: *TcpServer) void {

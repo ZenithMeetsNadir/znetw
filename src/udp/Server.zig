@@ -12,6 +12,8 @@ const util = @import("util");
 const socket_util = util.socket;
 const udp = @import("udp.zig");
 
+const log = std.log.scoped(.UdpCore);
+
 const UdpServer = @This();
 
 const AtomicBool = std.atomic.Value(bool);
@@ -64,8 +66,8 @@ pub fn close(self: *UdpServer) void {
         if (self.blocking) {
             self.bound.store(false, .release);
             posix.shutdown(self.socket, .both) catch |err| {
-                std.log.err("udp server socket shutdown error: {s}", .{@errorName(err)});
-                std.log.info("udp server closing socket", .{});
+                log.warn("failed to shutdown socket properly due to error: {s}", .{@errorName(err)});
+                log.info("closing socket", .{});
                 posix.close(self.socket);
             };
         }
@@ -79,7 +81,7 @@ pub fn close(self: *UdpServer) void {
         posix.close(self.socket);
     }
 
-    std.log.info("udp server shut down", .{});
+    log.info("shut down", .{});
 }
 
 /// Starts listening for incoming data on a dedicated thread. Triggers callback `dispatch_fn` on receive.
@@ -99,12 +101,12 @@ pub fn listen(self: *UdpServer) ServerListenError!void {
 
     self.serve_th = try Thread.spawn(.{}, listenLoop, .{self});
 
-    std.log.info("udp server listening on {f}...", .{self.ip4});
+    log.info("listening on {f}...", .{self.ip4});
 }
 
 fn listenLoop(self: *UdpServer) std.mem.Allocator.Error!void {
     if (self.dispatch_fn == null)
-        std.log.warn("udp server dispatch function is not set, incoming data will not be processed", .{});
+        log.warn("dispatch function is not set, incoming data will not be processed", .{});
 
     const buffer = try self.allocator.alloc(u8, self.buffer_size);
     defer self.allocator.free(buffer);
@@ -136,7 +138,7 @@ pub fn sendTo(self: UdpServer, ip4: Ip4Address, data: []const u8) ServerSendToEr
     const bytes_sent = try posix.sendto(self.socket, data, 0, @ptrCast(&ip4.sa), @sizeOf(addr_in));
 
     if (bytes_sent != data.len)
-        std.log.warn("udp server sendTo() inconsistency - number of bytes sent: {d} of {d}", .{ bytes_sent, data.len });
+        log.warn("sendTo() inconsistency - number of bytes sent: {d} of {d}", .{ bytes_sent, data.len });
 }
 
 /// Attempts to enable broadcast on the server socket.

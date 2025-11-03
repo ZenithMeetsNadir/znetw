@@ -10,6 +10,8 @@ const util = @import("util");
 const socket_util = util.socket;
 const udp = @import("udp.zig");
 
+const log = std.log.scoped(.UdpClient);
+
 const UdpServer = @import("Server.zig");
 const UdpClient = @This();
 
@@ -70,12 +72,12 @@ pub fn listen(self: *UdpClient) ClientListenError!void {
 
     self.udp_core.serve_th = try Thread.spawn(.{}, listenLoop, .{self});
 
-    std.log.info("udp client running...", .{});
+    log.info("running...", .{});
 }
 
 fn listenLoop(self: *const UdpClient) std.mem.Allocator.Error!void {
     if (self.dispatch_fn == null)
-        std.log.warn("udp server dispatch function is not set, incoming data will not be processed", .{});
+        log.warn("dispatch function is not set, incoming data will not be processed", .{});
 
     const buffer = try self.udp_core.allocator.alloc(u8, self.udp_core.buffer_size);
     defer self.udp_core.allocator.free(buffer);
@@ -104,5 +106,5 @@ pub fn send(self: UdpClient, data: []const u8) ClientSendError!void {
     const bytes_sent = try posix.write(self.udp_core.socket, data);
 
     if (bytes_sent != data.len)
-        std.log.warn("udp client send() inconsistency - number of bytes sent: {d} of {d}", .{ bytes_sent, data.len });
+        log.warn("send() inconsistency - number of bytes sent: {d} of {d}", .{ bytes_sent, data.len });
 }
