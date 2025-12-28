@@ -126,14 +126,32 @@ fn listenLoop(self: *const TcpClient) void {
 
 /// Sends data through the connected socket.
 ///
-/// Returns `NotConnected` if the client is not connected.
-/// It might immediately return `WouldBlock` for a blocking operation in non-blocking mode.
-pub fn send(self: TcpClient, data: []const u8) ClientSendError!void {
+/// Returns:
+/// - Number of bytes sent. If bytes sent is less than `data.len`, the caller can call this function again on the remaining data.
+/// - `NotConnected` if the client is not connected.
+/// - `WouldBlock` for a blocking operation in non-blocking mode.
+pub inline fn send(self: TcpClient, data: []const u8) ClientSendError!usize {
     if (!self.connected.load(.acquire))
         return ClientSendError.NotConnected;
 
-    const bytes_sent = try posix.write(self.socket, data);
+    return posix.write(self.socket, data);
+}
 
-    if (bytes_sent != data.len)
-        log.warn("send() inconsistency - number of bytes sent: {d} of {d}", .{ bytes_sent, data.len });
+/// Blocks until all data has been sent through the connected socket.
+///
+/// Returns `NotConnected` if the client is not connected.
+pub fn sendAll(self: TcpClient, data: []const u8) ClientSendError!void {
+    if (!self.connected.load(.acquire))
+        return ClientSendError.NotConnected;
+
+    var total_sent: usize = 0;
+    while (total_sent < data.len) {
+        total_sent += self.send(data[total_sent..]) catch |err| switch (err) {
+            ClientSendError.WouldBlock => {
+                Thread.yield() catch continue;
+                continue;
+            },
+            else => return err,
+        };
+    }
 }

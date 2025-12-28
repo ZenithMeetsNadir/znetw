@@ -124,16 +124,36 @@ fn listenLoop(self: *UdpServer) void {
 
 /// Sends data through the bound socket to the specified address.
 ///
+/// Returns:
+/// - Number of bytes sent. If bytes sent is less than `data.len`, the caller can call this function again on the remaining data.
+/// - `NotBound` if the server socket is not bound.
 /// Even though `sendTo` could utilize a different socket, the function will call `sendTo` on the server bound socket, hence returning `NotBound` if the socket is not bound.
-/// It might immediately return `WouldBlock` for a blocking operation in non-blocking mode.
-pub fn sendTo(self: UdpServer, ip4: Ip4Address, data: []const u8) ServerSendToError!void {
+/// - `WouldBlock` for a blocking operation in non-blocking mode.
+pub inline fn sendTo(self: UdpServer, ip4: Ip4Address, data: []const u8) ServerSendToError!usize {
     if (!self.bound.load(.acquire))
         return ServerSendToError.NotBound;
 
-    const bytes_sent = try posix.sendto(self.socket, data, 0, @ptrCast(&ip4.sa), @sizeOf(addr_in));
+    return posix.sendto(self.socket, data, 0, @ptrCast(&ip4.sa), @sizeOf(addr_in));
+}
 
-    if (bytes_sent != data.len)
-        log.warn("sendTo() inconsistency - number of bytes sent: {d} of {d}", .{ bytes_sent, data.len });
+/// Blocks until all data has been sent through the connected socket.
+///
+/// Returns `NotBound` if the server socket is not bound.
+/// Even though `sendTo` could utilize a different socket, the function will call `sendTo` on the server bound socket, hence returning `NotBound` if the socket is not bound.
+pub fn sendAllTo(self: UdpServer, ip4: Ip4Address, data: []const u8) ServerSendToError!void {
+    if (!self.bound.load(.acquire))
+        return ServerSendToError.NotBound;
+
+    var total_sent: usize = 0;
+    while (total_sent < data.len) {
+        total_sent += self.sendTo(ip4, data[total_sent..]) catch |err| switch (err) {
+            ServerSendToError.WouldBlock => {
+                Thread.yield() catch continue;
+                continue;
+            },
+            else => return err,
+        };
+    }
 }
 
 /// Attempts to enable broadcast on the server socket.

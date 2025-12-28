@@ -123,16 +123,34 @@ pub const Connection = struct {
 
     /// Sends data through the `Connection`'s connected socket.
     ///
-    /// Returns `NotAlive` if the connection is not alive.
-    /// It might immediately return `WouldBlock` for a blocking operation in non-blocking mode.
-    pub fn send(self: Connection, data: []const u8) ConnSendError!void {
+    /// Returns:
+    /// - Number of bytes sent. If bytes sent is less than `data.len`, the caller can call this function again on the remaining data.
+    /// - `NotAlive` if the connection is not alive.
+    /// - `WouldBlock` for a blocking operation in non-blocking mode.
+    pub inline fn send(self: Connection, data: []const u8) ConnSendError!usize {
         if (!self.alive.load(.acquire))
             return ConnSendError.NotAlive;
 
-        const bytes_sent = try posix.write(self.socket, data);
+        return posix.write(self.socket, data);
+    }
 
-        if (bytes_sent != data.len)
-            log.warn("connection send() inconsistency - number of bytes sent: {d} of {d}.", .{ bytes_sent, data.len });
+    /// Blocks until all data has been sent through the `Connection`'s connected socket.
+    ///
+    /// Returns `NotAlive` if the connection is not alive.
+    pub fn sendAll(self: Connection, data: []const u8) ConnSendError!void {
+        if (!self.alive.load(.acquire))
+            return ConnSendError.NotAlive;
+
+        var total_sent: usize = 0;
+        while (total_sent < data.len) {
+            total_sent += posix.write(self.socket, data[total_sent..]) catch |err| switch (err) {
+                ConnSendError.WouldBlock => {
+                    Thread.yield() catch continue;
+                    continue;
+                },
+                else => return err,
+            };
+        }
     }
 
     /// Labels the connection to be later disposed of. It will be closed and removed from the server's connection list.
