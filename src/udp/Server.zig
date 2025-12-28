@@ -29,13 +29,12 @@ bound: AtomicBool,
 dispatch_fn: ?*const fn (server: *const UdpServer, sender_addr: Ip4Address, data: []const u8) anyerror!void = null,
 listening: AtomicBool = .init(false),
 serve_th: ?Thread = null,
-buffer_size: usize,
-allocator: std.mem.Allocator,
+recv_buffer: []u8,
 
 /// Creates a UDP server and binds to the specified IP and port. Uses a blocking or non-blocking socket.
 ///
 /// If `buffer_size` is null, the default buffer size defined in `udp.buffer_size` is used.
-pub fn open(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize, allocator: std.mem.Allocator) ServerOpenError!UdpServer {
+pub fn open(ip: []const u8, port: u16, blocking: bool, recv_buffer: []u8) ServerOpenError!UdpServer {
     const socket: socket_t = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, posix.IPPROTO.UDP);
     errdefer posix.close(socket);
 
@@ -49,10 +48,9 @@ pub fn open(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize, allo
     return UdpServer{
         .socket = socket,
         .ip4 = ip4,
-        .buffer_size = buffer_size orelse udp.buffer_size,
+        .recv_buffer = recv_buffer,
         .blocking = blocking,
         .bound = .init(true),
-        .allocator = allocator,
     };
 }
 
@@ -104,25 +102,22 @@ pub fn listen(self: *UdpServer) ServerListenError!void {
     log.info("listening on {f}...", .{self.ip4});
 }
 
-fn listenLoop(self: *UdpServer) std.mem.Allocator.Error!void {
+fn listenLoop(self: *UdpServer) void {
     if (self.dispatch_fn == null)
         log.warn("dispatch function is not set, incoming data will not be processed", .{});
-
-    const buffer = try self.allocator.alloc(u8, self.buffer_size);
-    defer self.allocator.free(buffer);
 
     while (self.listening.load(.acquire)) {
         var sender_ip4: Ip4Address = undefined;
         var addr_len: posix.socklen_t = @sizeOf(addr_in);
 
-        const data_len = posix.recvfrom(self.socket, buffer, 0, @ptrCast(&sender_ip4.sa), &addr_len) catch |err| switch (err) {
-            posix.RecvFromError.MessageTooBig => self.buffer_size,
+        const data_len = posix.recvfrom(self.socket, self.recv_buffer, 0, @ptrCast(&sender_ip4.sa), &addr_len) catch |err| switch (err) {
+            posix.RecvFromError.MessageTooBig => self.recv_buffer.len,
             else => continue,
         };
         if (data_len == 0) continue;
 
         if (self.dispatch_fn) |dspch| {
-            dspch(self, sender_ip4, buffer[0..data_len]) catch continue;
+            dspch(self, sender_ip4, self.recv_buffer[0..data_len]) catch continue;
         }
     }
 }

@@ -31,12 +31,12 @@ connected: AtomicBool,
 dispatch_fn: ?*const fn (self: *const TcpClient, data: []const u8) anyerror!void = null,
 listening: AtomicBool = .init(false),
 listen_th: ?Thread = null,
-buffer_size: usize,
+recv_buffer: []u8,
 
 /// Creates a TCP client and connects to the specified IP and port. Uses a blocking or non-blocking socket.
 ///
 /// If passed `buffer_size` is null, the default buffer size defined in `tcp.buffer_size` is used.
-pub fn connect(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize) ClientConnectError!TcpClient {
+pub fn connect(ip: []const u8, port: u16, blocking: bool, recv_buffer: []u8) ClientConnectError!TcpClient {
     const socket: socket_t = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, posix.IPPROTO.TCP);
     errdefer posix.close(socket);
 
@@ -55,7 +55,7 @@ pub fn connect(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize) C
         .ip4 = ip4,
         .blocking = blocking,
         .connected = .init(true),
-        .buffer_size = buffer_size orelse tcp.buffer_size,
+        .recv_buffer = recv_buffer,
     };
 }
 
@@ -107,22 +107,19 @@ pub fn listen(self: *TcpClient, allocator: std.mem.Allocator) ClientListenError!
     log.info("running...", .{});
 }
 
-fn listenLoop(self: *const TcpClient, allocator: std.mem.Allocator) std.mem.Allocator.Error!void {
+fn listenLoop(self: *const TcpClient) void {
     if (self.dispatch_fn == null)
         log.warn("dispatch function is not set, incoming data will not be processed", .{});
 
-    const buffer = try allocator.alloc(u8, self.buffer_size);
-    defer allocator.free(buffer);
-
     while (self.listening.load(.acquire)) {
-        const data_len = posix.recv(self.socket, buffer, 0) catch |err| switch (err) {
-            posix.RecvFromError.MessageTooBig => tcp.buffer_size,
+        const data_len = posix.recv(self.socket, self.recv_buffer, 0) catch |err| switch (err) {
+            posix.RecvFromError.MessageTooBig => self.recv_buffer.len,
             else => continue,
         };
         if (data_len == 0) continue;
 
         if (self.dispatch_fn) |dspch| {
-            dspch(self, buffer[0..data_len]) catch continue;
+            dspch(self, self.recv_buffer[0..data_len]) catch continue;
         }
     }
 }

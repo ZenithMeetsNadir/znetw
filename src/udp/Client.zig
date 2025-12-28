@@ -25,7 +25,7 @@ dispatch_fn: ?*const fn (self: *const UdpClient, data: []const u8) anyerror!void
 /// Creates a UDP client and connects the datagram socket address to the specified IP and port. Uses a blocking or non-blocking socket.
 ///
 /// If passed `buffer_size` is null, the default buffer size defined in `udp.buffer_size` is used.
-pub fn connect(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize, allocator: std.mem.Allocator) ClientConnectError!UdpClient {
+pub fn connect(ip: []const u8, port: u16, blocking: bool, recv_buffer: []u8) ClientConnectError!UdpClient {
     const socket: socket_t = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, posix.IPPROTO.UDP);
     errdefer posix.close(socket);
 
@@ -43,8 +43,7 @@ pub fn connect(ip: []const u8, port: u16, blocking: bool, buffer_size: ?usize, a
         .ip4 = ip4,
         .blocking = blocking,
         .bound = .init(true),
-        .buffer_size = buffer_size orelse udp.buffer_size,
-        .allocator = allocator,
+        .recv_buffer = recv_buffer,
     } };
 }
 
@@ -75,22 +74,19 @@ pub fn listen(self: *UdpClient) ClientListenError!void {
     log.info("running...", .{});
 }
 
-fn listenLoop(self: *const UdpClient) std.mem.Allocator.Error!void {
+fn listenLoop(self: *const UdpClient) void {
     if (self.dispatch_fn == null)
         log.warn("dispatch function is not set, incoming data will not be processed", .{});
 
-    const buffer = try self.udp_core.allocator.alloc(u8, self.udp_core.buffer_size);
-    defer self.udp_core.allocator.free(buffer);
-
     while (self.udp_core.listening.load(.acquire)) {
-        const data_len = posix.recv(self.udp_core.socket, buffer, 0) catch |err| switch (err) {
-            posix.RecvFromError.MessageTooBig => self.udp_core.buffer_size,
+        const data_len = posix.recv(self.udp_core.socket, self.udp_core.recv_buffer, 0) catch |err| switch (err) {
+            posix.RecvFromError.MessageTooBig => self.udp_core.recv_buffer.len,
             else => continue,
         };
         if (data_len == 0) continue;
 
         if (self.dispatch_fn) |dspch| {
-            dspch(self, buffer[0..data_len]) catch continue;
+            dspch(self, self.udp_core.recv_buffer[0..data_len]) catch continue;
         }
     }
 }
